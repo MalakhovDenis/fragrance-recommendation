@@ -80,7 +80,7 @@ class FragranticaScraper:
         perfumes = []
         seen = set()
 
-        section_labels = ["У меня есть", "Я хочу", "У меня были", "Попробовать"]
+        section_labels = ["У меня есть"]
 
         for h4 in soup.find_all("h4"):
             if not any(label in h4.get_text(strip=True) for label in section_labels):
