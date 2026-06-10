@@ -1,0 +1,8 @@
+aiogram>=3.0.0
+playwright
+beautifulsoup4
+python-dotenv
+openai
+httpx
+groq
+playwright-stealth

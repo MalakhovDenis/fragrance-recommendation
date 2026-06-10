@@ -1,0 +1,24 @@
+# Секреты
+.env
+
+# Пользователи
+data/users.json
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# Логи и отладка
+bot.log
+error.png
+board_test.png
+debug_multi.py
+
+# Изображения
+*.png
+
+# OS
+.DS_Store
