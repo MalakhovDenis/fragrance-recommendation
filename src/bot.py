@@ -1,12 +1,14 @@
 import os
 import asyncio
+import json
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
+from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from dotenv import load_dotenv
+from groq import AsyncGroq
 
 from scraper import FragranticaScraper
 from recommender import PerfumeRecommender
@@ -17,26 +19,36 @@ load_dotenv()
 
 bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
 dp = Dispatcher(storage=MemoryStorage())
+groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 
 
 class Setup(StatesGroup):
     waiting_for_profile = State()
+    waiting_for_search = State()
 
 
 def main_keyboard():
     builder = ReplyKeyboardBuilder()
     builder.row(types.KeyboardButton(text="🔎 Получить рекомендации"))
-    builder.row(types.KeyboardButton(text="⚙️ Изменить профиль"))
+    builder.row(
+        types.KeyboardButton(text="🔍 Найти аромат"),
+        types.KeyboardButton(text="⚙️ Изменить профиль"),
+    )
     return builder.as_markup(resize_keyboard=True)
+
+
+MENU_BUTTONS = {"🔎 Получить рекомендации", "🔍 Найти аромат", "⚙️ Изменить профиль"}
 
 
 @dp.message(Command("start"))
 async def start_handler(message: types.Message, state: FSMContext):
+    await state.clear()
     profile_id = get_profile_id(message.from_user.id)
     if profile_id:
         await message.answer(
-            f"Привет! Твой профиль Fragrantica уже привязан (ID: {profile_id}).\n"
-            "Нажми кнопку чтобы получить рекомендации.",
+            "Привет! Я Духовед 🧴 — помогаю выбирать ароматы.\n\n"
+            "Могу порекомендовать что-то по твоей полке, найти конкретный аромат "
+            "или просто поговорить о парфюмерии. Чем помочь?",
             reply_markup=main_keyboard(),
         )
     else:
@@ -52,10 +64,10 @@ async def ask_for_profile(message: types.Message, state: FSMContext):
     await state.set_state(Setup.waiting_for_profile)
     await message.answer(
         "📋 *Привяжи свой профиль Fragrantica*\n\n"
-        "1. Открой сайт [fragrantica.ru](https://www.fragrantica.ru) и войди в аккаунт\n"
-        "2. Перейди на свой профиль (иконка профиля → «Моя Fragrantica»)\n"
-        "3. Скопируй ссылку из адресной строки\n"
-        "   Она выглядит так: `https://www.fragrantica.ru/chlen/462653`\n\n"
+        "1. Открой [fragrantica.ru](https://www.fragrantica.ru) и войди в аккаунт\n"
+        "2. Перейди на свой профиль (иконка → «Моя Fragrantica»)\n"
+        "3. Скопируй ссылку из адресной строки:\n"
+        "   `https://www.fragrantica.ru/chlen/462653`\n\n"
         "Отправь эту ссылку сюда 👇",
         parse_mode="Markdown",
         disable_web_page_preview=True,
@@ -67,7 +79,7 @@ async def profile_received(message: types.Message, state: FSMContext):
     profile_id = extract_profile_id(message.text or "")
     if not profile_id:
         await message.answer(
-            "❌ Не могу найти ID профиля в этом тексте.\n\n"
+            "❌ Не могу найти ID профиля.\n\n"
             "Нужна ссылка вида:\n`https://www.fragrantica.ru/chlen/462653`\n\n"
             "Попробуй ещё раз:",
             parse_mode="Markdown",
@@ -75,15 +87,12 @@ async def profile_received(message: types.Message, state: FSMContext):
         return
 
     status = await message.answer("⌛ Проверяю профиль...")
-
-    # Проверяем что профиль существует и содержит ароматы
     try:
         scraper = FragranticaScraper()
         favorites = await scraper.get_favorites(profile_id)
     except Exception as e:
         await status.edit_text(
-            f"❌ Не удалось загрузить профиль: {e}\n\n"
-            "Убедись что ссылка верная и попробуй ещё раз."
+            f"❌ Не удалось загрузить профиль: {e}\n\nУбедись что ссылка верная и попробуй ещё раз."
         )
         return
 
@@ -94,16 +103,13 @@ async def profile_received(message: types.Message, state: FSMContext):
         names = ", ".join(p["name"] for p in favorites[:5])
         more = f" и ещё {len(favorites) - 5}" if len(favorites) > 5 else ""
         await status.edit_text(
-            f"✅ Профиль привязан! Нашёл {len(favorites)} ароматов:\n"
-            f"_{names}{more}_",
+            f"✅ Профиль привязан! Нашёл {len(favorites)} ароматов:\n_{names}{more}_",
             parse_mode="Markdown",
             reply_markup=main_keyboard(),
         )
     else:
         await status.edit_text(
-            "✅ Профиль привязан!\n\n"
-            "😕 Гардероб пока пуст — добавь ароматы на Fragrantica "
-            "(раздел «У меня есть» или «Я хочу»), и я подберу рекомендации.",
+            "✅ Профиль привязан!\n\n😕 Гардероб пока пуст — добавь ароматы на Fragrantica.",
             reply_markup=main_keyboard(),
         )
 
@@ -123,8 +129,7 @@ async def recommendations_handler(message: types.Message, state: FSMContext):
 
         if not favorites:
             await status_msg.edit_text(
-                "😕 Гардероб пуст.\n"
-                "Добавь ароматы на Fragrantica в раздел «У меня есть» или «Я хочу»."
+                "😕 Гардероб пуст. Добавь ароматы на Fragrantica в раздел «У меня есть»."
             )
             return
 
@@ -179,25 +184,34 @@ async def recommendations_handler(message: types.Message, state: FSMContext):
             os.remove("error.png")
 
 
-@dp.message(F.text & ~F.text.startswith("/"))
-async def search_perfume_handler(message: types.Message, state: FSMContext):
-    # Не реагируем на кнопки меню
-    if message.text in ("🔎 Получить рекомендации", "⚙️ Изменить профиль"):
-        return
-    # Если ждём профиль — не перехватываем
-    current_state = await state.get_state()
-    if current_state == Setup.waiting_for_profile.state:
-        return
+@dp.message(F.text == "🔍 Найти аромат")
+async def search_button_handler(message: types.Message, state: FSMContext):
+    await state.set_state(Setup.waiting_for_search)
+    await message.answer(
+        "🔍 Напиши название аромата — точное или приблизительное, на русском или английском:",
+        reply_markup=types.ReplyKeyboardRemove(),
+    )
 
+
+@dp.message(Setup.waiting_for_search)
+async def search_query_received(message: types.Message, state: FSMContext):
+    await state.clear()
     query = message.text.strip()
-    status = await message.answer(f"🔍 Ищу «{query}» на Fragrantica...")
+    await _do_perfume_search(message, query)
+
+
+async def _do_perfume_search(message: types.Message, query: str):
+    status = await message.answer(f"🔍 Ищу «{query}»...", reply_markup=main_keyboard())
 
     try:
         scraper = FragranticaScraper()
         info = await scraper.search_perfume(query)
 
         if not info:
-            await status.edit_text("😕 Ничего не найдено. Попробуй уточнить название или написать по-английски.")
+            await status.edit_text(
+                "😕 Ничего не найдено. Попробуй уточнить название.",
+                reply_markup=main_keyboard(),
+            )
             return
 
         await status.edit_text("💰 Ищу цену на АллюрПарфюм...")
@@ -206,7 +220,6 @@ async def search_perfume_handler(message: types.Message, state: FSMContext):
         price_info = await price_service.fetch_prices(info["name"])
 
         notes_str = info.get("notes_text") or "нет данных"
-
         year_str = f" ({info['year']})" if info.get("year") else ""
 
         if price_info and price_info.get("price_per_ml"):
@@ -238,6 +251,49 @@ async def search_perfume_handler(message: types.Message, state: FSMContext):
 
     except Exception as e:
         await status.edit_text(f"❌ Ошибка: {e}")
+
+
+async def _chat_with_ai(message: types.Message, state: FSMContext):
+    """Естественный диалог о парфюмерии через Groq."""
+    # Сохраняем историю в FSM state (последние 10 сообщений)
+    data = await state.get_data()
+    history = data.get("chat_history", [])
+
+    history.append({"role": "user", "content": message.text})
+    if len(history) > 20:
+        history = history[-20:]
+
+    system = (
+        "Ты Духовед — эксперт-парфюмер и дружелюбный консультант по ароматам. "
+        "Отвечаешь кратко и по делу, на русском языке. "
+        "Знаешь всё о парфюмерии: ноты, бренды, тенденции, стойкость, сезонность. "
+        "Если пользователь спрашивает про конкретный аромат, предлагаешь нажать кнопку '🔍 Найти аромат' чтобы получить цены."
+    )
+
+    try:
+        typing_msg = await message.answer("...")
+        response = await groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "system", "content": system}] + history,
+            temperature=0.8,
+            max_tokens=512,
+        )
+        reply = response.choices[0].message.content.strip()
+        history.append({"role": "assistant", "content": reply})
+        await state.update_data(chat_history=history)
+        await typing_msg.edit_text(reply)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
+@dp.message(F.text & ~F.text.startswith("/"))
+async def text_handler(message: types.Message, state: FSMContext):
+    if message.text in MENU_BUTTONS:
+        return
+    current_state = await state.get_state()
+    if current_state in (Setup.waiting_for_profile.state, Setup.waiting_for_search.state):
+        return
+    await _chat_with_ai(message, state)
 
 
 async def main():
