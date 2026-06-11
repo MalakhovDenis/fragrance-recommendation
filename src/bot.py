@@ -78,7 +78,8 @@ async def start_handler(message: types.Message, state: FSMContext):
         status = await message.answer("⌛ Загружаю твою полку с Fragrantica...")
         favorites = await _load_favorites_to_state(state, profile_id)
         fav_hint = f" Вижу {len(favorites)} ароматов в твоей полке." if favorites else ""
-        await status.edit_text(
+        await status.delete()
+        await message.answer(
             f"Привет! Я Духовед 🧴 — помогаю выбирать ароматы.{fav_hint}\n\n"
             "Можем поговорить о парфюмерии, я подберу рекомендации по твоему вкусу "
             "или найду конкретный аромат с ценой.",
@@ -280,7 +281,11 @@ async def _do_perfume_search(message: types.Message, query: str):
             await message.answer(caption, parse_mode="Markdown", disable_web_page_preview=True)
 
     except Exception as e:
-        await status.edit_text(f"❌ Ошибка: {e}")
+        try:
+            await status.delete()
+        except Exception:
+            pass
+        await message.answer(f"❌ Ошибка: {e}")
 
 
 @dp.message(F.text & ~F.text.startswith("/"))

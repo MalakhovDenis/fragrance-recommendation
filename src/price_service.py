@@ -43,8 +43,8 @@ class PriceService:
         words = perfume_name.split()
         queries = [perfume_name]
         if len(words) > 2:
-            queries.append(" ".join(words[-2:]))   # последние 2 слова (обычно название без бренда)
-            queries.append(" ".join(words[-3:]))   # последние 3 слова
+            queries.append(" ".join(words[:2]))    # первые 2 слова (обычно название)
+            queries.append(" ".join(words[:3]))    # первые 3 слова
 
         product_url = None
         for query in queries:
