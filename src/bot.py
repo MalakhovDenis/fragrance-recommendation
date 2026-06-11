@@ -179,6 +179,67 @@ async def recommendations_handler(message: types.Message, state: FSMContext):
             os.remove("error.png")
 
 
+@dp.message(F.text & ~F.text.startswith("/"))
+async def search_perfume_handler(message: types.Message, state: FSMContext):
+    # Не реагируем на кнопки меню
+    if message.text in ("🔎 Получить рекомендации", "⚙️ Изменить профиль"):
+        return
+    # Если ждём профиль — не перехватываем
+    current_state = await state.get_state()
+    if current_state == Setup.waiting_for_profile.state:
+        return
+
+    query = message.text.strip()
+    status = await message.answer(f"🔍 Ищу «{query}» на Fragrantica...")
+
+    try:
+        scraper = FragranticaScraper()
+        info = await scraper.search_perfume(query)
+
+        if not info:
+            await status.edit_text("😕 Ничего не найдено. Попробуй уточнить название или написать по-английски.")
+            return
+
+        await status.edit_text("💰 Ищу цену на АллюрПарфюм...")
+
+        price_service = PriceService()
+        price_info = await price_service.fetch_prices(info["name"])
+
+        notes_str = info.get("notes_text") or "нет данных"
+
+        year_str = f" ({info['year']})" if info.get("year") else ""
+
+        if price_info and price_info.get("price_per_ml"):
+            avail = "✅ в наличии" if price_info["available"] else "⏳ нет в наличии"
+            vol = int(price_info["volume_ml"]) if price_info["volume_ml"] == int(price_info["volume_ml"]) else price_info["volume_ml"]
+            price_str = f"[{price_info['price_rub']}₽/{vol}мл · {price_info['price_per_ml']}₽/мл · {avail}]({price_info['url']})"
+        else:
+            search_url = PriceService.get_search_url(info["name"])
+            price_str = f"[смотреть пробники]({search_url})"
+
+        caption = (
+            f"*{info['name']}*{year_str}\n\n"
+            f"👃 *Ноты:*\n{notes_str}\n\n"
+            f"💊 *АллюрПарфюм:* {price_str}\n\n"
+            f"🔗 [Открыть на Fragrantica]({info['url']})"
+        )
+
+        await status.delete()
+
+        image_url = price_info.get("image_url") if price_info else None
+        if image_url:
+            await message.answer_photo(
+                photo=image_url,
+                caption=caption,
+                parse_mode="Markdown",
+            )
+        else:
+            await message.answer(caption, parse_mode="Markdown", disable_web_page_preview=True)
+
+    except Exception as e:
+        await status.edit_text(f"❌ Ошибка: {e}")
+
+
 async def main():
     await dp.start_polling(bot)
 

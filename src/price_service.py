@@ -81,7 +81,20 @@ class PriceService:
             await page2.close()
 
         soup2 = BeautifulSoup(content2, "html.parser")
-        return self._parse_sample_price(soup2, product_url)
+        price_data = self._parse_sample_price(soup2, product_url)
+        image_url = self._parse_product_image(soup2)
+        if price_data and image_url:
+            price_data["image_url"] = image_url
+        elif image_url:
+            return {"image_url": image_url, "url": product_url}
+        return price_data
+
+    def _parse_product_image(self, soup) -> str:
+        for img in soup.find_all("img", src=True):
+            src = img["src"]
+            if "450_450" in src and "/upload/" in src:
+                return f"{self.BASE}{src}" if src.startswith("/") else src
+        return ""
 
     def _find_best_product_link(self, soup, perfume_name: str, min_score: int = 2) -> str | None:
         """Из страницы поиска выбирает наиболее подходящую ссылку на товар."""
